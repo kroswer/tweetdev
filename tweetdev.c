@@ -4,6 +4,7 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/semaphore.h>
+#include <linux/string.h>
 #include <asm/uaccess.h>
 
 struct tweet_device
@@ -33,11 +34,12 @@ int device_open(struct inode *inode, struct file *filp){
 ssize_t device_read(struct file* filp, char* bufEntrada, size_t bufCount, loff_t* offset){
 	printk(KERN_INFO "tweetdev: leyendo del dispositivo");
 	ret = copy_to_user(bufEntrada, tweetdev.tweet, bufCount);
+	strncpy(tweetdev.tweet, "", 120); 
 	return ret;
 }
 
 ssize_t device_write(struct file* filp, const char* bufEntrada, size_t bufCount, loff_t* offset){
-	printk(KERN_INFO "tweetdev: escribiendo del dispositivo");
+	printk(KERN_INFO "tweetdev: escribiendo al dispositivo");
 	ret = copy_from_user(tweetdev.tweet, bufEntrada, bufCount);
 	return ret;
 }
@@ -58,6 +60,7 @@ struct file_operations fops = {
 
 static int driver_entry(void){
 	ret = alloc_chrdev_region(&dev_num,0,1,NOM_DEV);
+	printk(KERN_INFO "tweetdev: major=%d, minor=%d\n", MAJOR(dev_num), MINOR(dev_num));
 	cl = class_create(NOM_DEV, "miclase");
 	device_create(cl, NULL, dev_num, NULL, NOM_DEV);
 	if (ret < 0)
@@ -66,9 +69,10 @@ static int driver_entry(void){
 		return ret;
 	}
 
+	cdev_init(&micdev, &fops);
 	micdev = cdev_alloc();
-	micdev->ops = &fops;
-	micdev->owner = NOM_DEV;
+//	micdev->ops = &fops;
+//	micdev->owner = NOM_DEV;
 	ret = cdev_add(micdev, dev_num, 1);
 	if (ret < 0)
 	{
@@ -82,6 +86,8 @@ static int driver_entry(void){
 
 static void driver_exit(void){
 	cdev_del(micdev);
+	device_destroy(cl, dev_num);
+	class_destroy(cl);
 	unregister_chrdev_region(dev_num, 1);
 	printk(KERN_ALERT "tweetdev: driver descargado");
 }
