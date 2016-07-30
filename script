@@ -1,0 +1,32 @@
+#!/usr/bin/python
+
+import os
+import time
+from twython import Twython
+from auth import (
+  consumer_key,
+  consumer_secret,
+  access_token,
+  access_token_secret
+)
+
+twitter = Twython(
+  consumer_key,
+  consumer_secret,
+  access_token,
+  access_token_secret
+)
+
+# Loop principal
+while True:
+    message = ""
+    with open('/dev/tweetdev','r') as dev:
+        message = dev.read()
+	if message != "":
+            try:
+                twitter.update_status(status=message+time.strftime("%c"))
+            except Exception, e:
+		print "Imposible enviar tweet: ", str(e)
+        else:
+            time.sleep(0.5)
+
