@@ -1,10 +1,12 @@
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/kernel.h>
+#include <linux/types.h>
+#include <linux/kdev_t.h>
 #include <linux/fs.h>
-#include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/semaphore.h>
-#include <linux/string.h>
+#include <linux/cdev.h>
 #include <asm/uaccess.h>
 
 struct tweet_device
@@ -13,85 +15,130 @@ struct tweet_device
 	struct semaphore sem;
 } tweetdev;
 
-struct cdev *micdev;
-int major_number;
+static dev_t first; // Global variable for the first device number
+static struct cdev c_dev; // Global variable for the character device structure
+static struct class *cl; // Global variable for the device class
 int ret;
 
-dev_t dev_num;
-struct class *cl;
-
-#define NOM_DEV	"tweetdev"
-
-int device_open(struct inode *inode, struct file *filp){
-	if(down_interruptible(&tweetdev.sem) != 0){
-		printk(KERN_ALERT "tweetdev: dispositivo ocupado");
-		return -1;
-	}
-	printk(KERN_INFO "tweetdev: dispositivo abierto");
+static int my_open(struct inode *i, struct file *f)
+{
+	printk(KERN_INFO "Driver: open()\n");
 	return 0;
 }
-
-ssize_t device_read(struct file* filp, char* bufEntrada, size_t bufCount, loff_t* offset){
-	printk(KERN_INFO "tweetdev: leyendo del dispositivo");
-	ret = copy_to_user(bufEntrada, tweetdev.tweet, bufCount);
+static int my_close(struct inode *i, struct file *f)
+{
+	printk(KERN_INFO "Driver: close()\n");
+	return 0;
+}
+static ssize_t my_read(struct file *f, char __user *buf, size_t count, loff_t* ppos)
+{
+	printk(KERN_INFO "Driver: read()\n");
+	
+	char *hello_str = "Hello, world!\n";
+	int len = strlen(hello_str); /* Don't include the null byte. */
+	/*
+	 * We only support reading the whole string at once.
+	 */
+	//strncpy(tweetdev.tweet, hello_str, len);
+	if (count < len)
+		return -EINVAL;
+	/*
+	 * If file position is non-zero, then assume the string has
+	 * been read and indicate there is no more data to be read.
+	 */
+	if (*ppos != 0)
+		return 0;
+	/*
+	 * Besides copying the string to the user provided buffer,
+	 * this function also checks that the user has permission to
+	 * write to the buffer, that it is mapped, etc.
+	 */
+	if (copy_to_user(buf, tweetdev.tweet, len))
+		return -EINVAL;
+	/*
+	 * Tell the user how much data we wrote.
+	 */
+	printk(KERN_INFO "Read: buff %s", buf);
+	*ppos = len;
+	return len;
+	/*ret = copy_to_user(buf, tweetdev.tweet, len);
+	printk(KERN_INFO "ret: %d\n", ret);
 	strncpy(tweetdev.tweet, "", 120); 
-	return ret;
+	return 0;*/
+}
+static ssize_t my_write(struct file *f, const char __user *buf, size_t count, loff_t *off)
+{
+	printk(KERN_INFO "Driver: write()\n");
+	int len = strlen(tweetdev.tweet);
+	printk(KERN_INFO "antes de ifs\n");
+	if(len>count)
+		return -EINVAL;
+	*off = 0;
+	/*if (*off != 0)
+		return 0;*/
+	printk(KERN_INFO "quiero copiar\n");
+	if(copy_from_user(tweetdev.tweet, buf, count))
+		return -EINVAL;
+	//printk(KERN_INFO "Write: buff %s", buf);
+	//*off = 0;
+	return len;
 }
 
-ssize_t device_write(struct file* filp, const char* bufEntrada, size_t bufCount, loff_t* offset){
-	printk(KERN_INFO "tweetdev: escribiendo al dispositivo");
-	ret = copy_from_user(tweetdev.tweet, bufEntrada, bufCount);
-	return ret;
-}
-
-int device_close(struct inode *inode, struct file *filp){
-	up(&tweetdev.sem);
-	printk(KERN_INFO "tweetdev: dispositivo cerrado");
-	return 0;
-}
-
-struct file_operations fops = {
-	.owner = NOM_DEV,
-	.open = device_open,
-	.release = device_close,
-	.write = device_write,
-	.read = device_read
+static struct file_operations pugs_fops =
+{
+	.owner = THIS_MODULE,
+	.open = my_open,
+	.release = my_close,
+	.read = my_read,
+	.write = my_write
 };
 
-static int driver_entry(void){
-	ret = alloc_chrdev_region(&dev_num,0,1,NOM_DEV);
-	printk(KERN_INFO "tweetdev: major=%d, minor=%d\n", MAJOR(dev_num), MINOR(dev_num));
-	cl = class_create(NOM_DEV, "miclase");
-	device_create(cl, NULL, dev_num, NULL, NOM_DEV);
-	if (ret < 0)
+static int __init ofcd_init(void) /* Constructor */
+{
+	int ret;
+	struct device *dev_ret;
+
+	printk(KERN_INFO "Namaskar: ofcd registered");
+	if ((ret = alloc_chrdev_region(&first, 0, 1, "Shweta")) < 0)
 	{
-		printk(KERN_ALERT "tweetdev: imposible obtener major number");
 		return ret;
 	}
-
-	cdev_init(&micdev, &fops);
-	micdev = cdev_alloc();
-//	micdev->ops = &fops;
-//	micdev->owner = NOM_DEV;
-	ret = cdev_add(micdev, dev_num, 1);
-	if (ret < 0)
+	if (IS_ERR(cl = class_create(THIS_MODULE, "chardrv")))
 	{
-		printk(KERN_ALERT "tweetdev: imposible agregar dispositivo al kernel");
+		unregister_chrdev_region(first, 1);
+		return PTR_ERR(cl);
+	}
+	if (IS_ERR(dev_ret = device_create(cl, NULL, first, NULL, "mynull")))
+	{
+		class_destroy(cl);
+		unregister_chrdev_region(first, 1);
+		return PTR_ERR(dev_ret);
+	}
+
+	cdev_init(&c_dev, &pugs_fops);
+	if ((ret = cdev_add(&c_dev, first, 1)) < 0)
+	{
+		device_destroy(cl, first);
+		class_destroy(cl);
+		unregister_chrdev_region(first, 1);
 		return ret;
 	}
-	sema_init(&tweetdev.sem, 1);
-
 	return 0;
 }
 
-static void driver_exit(void){
-	cdev_del(micdev);
-	device_destroy(cl, dev_num);
+static void __exit ofcd_exit(void) /* Destructor */
+{
+	cdev_del(&c_dev);
+	device_destroy(cl, first);
 	class_destroy(cl);
-	unregister_chrdev_region(dev_num, 1);
-	printk(KERN_ALERT "tweetdev: driver descargado");
+	unregister_chrdev_region(first, 1);
+	printk(KERN_INFO "Alvida: ofcd unregistered");
 }
 
-module_init(driver_entry);
-module_exit(driver_exit);
+module_init(ofcd_init);
+module_exit(ofcd_exit);
+
 MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Anil Kumar Pugalia <email@sarika-pugs.com>");
+MODULE_DESCRIPTION("Our First Character Driver");
+
